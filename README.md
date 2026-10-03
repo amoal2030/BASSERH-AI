@@ -48,13 +48,33 @@
 
 ---
 
-## 🛠 البنية التقنية (Tech Stack)
+## 🛠 البنية التقنية وإدارة البيانات (Tech Stack & Database)
 
 - **Backend**: Node.js & Express REST API (`server.ts`, `server/db.ts`, `server/ai.ts`, `server/moderation.ts`, `server/auth.ts`).
-- **Database**: SQLite عبر `sql.js` (WebAssembly SQLite) مع حفظ مستمر في ملف `data/app.sqlite`.
+- **Database**: SQLite عبر `sql.js` (WebAssembly SQLite) مع حفظ ذري ومستمر في ملف `data/app.sqlite`.
 - **Frontend**: React 19 + TypeScript + Tailwind CSS v4 + Motion + Lucide Icons.
 - **AI Model**: Google Gemini API (`gemini-3.8-flash`) عبر `@google/genai`.
 - **Localization**: عربي (RTL) & English (LTR).
+
+### الجداول المخزنة في قاعدة البيانات (`data/app.sqlite`):
+1. **users**: `id, google_id, name, email, profile_image, created_at`
+2. **pages**: `id, user_id, slug, question, max_comments, comments_count, is_active, created_at, updated_at`
+3. **comments**: `id, page_id, content, anonymous_identifier, votes_count, is_hidden, created_at`
+4. **votes**: `id, comment_id, voter_identifier, created_at`
+5. **reports**: `id, comment_id, reason, reporter_identifier, created_at`
+6. **ai_analyses**: `id, page_id, summary, traits, percentages, analysis_json, analyzed_at, comments_analyzed_count, created_at, updated_at`
+
+### 🔒 قاعدة تعليق واحد فقط لكل شخص:
+- يُمنع إرسال أكثر من تعليق واحد لنفس السؤال من قبل نفس الشخص.
+- يتم التحقق برمجياً في الـ Backend قبل الإدراج، وفي واجهة المستخدم لعرض رسالة واضحة وإخفاء نموذج الإرسال.
+
+### 💾 النسخ الاحتياطي (Backups):
+- يتم حفظ النسخ الاحتياطية تلقائياً في مجلد `backups/` بصيغة `backup-YYYY-MM-DD_HH-mm-ss.sqlite`.
+- **لإنشاء نسخة احتياطية فورية من سطر الأوامر:**
+  ```bash
+  npm run backup
+  ```
+- **أو من خلال واجهة لوحة التحكم:** النقر على زر "نسخ احتياطي للقاعدة" لإنشاء نسخة فورية عبر `POST /api/backup`.
 
 ---
 
@@ -72,9 +92,14 @@ APP_URL="http://localhost:3000"
 ```bash
 npm run dev
 ```
-سيفتح الخادم على المنفذ `3000` متضمناً واجهات Frontend و Backend معاً.
+سيفتح الخادم على المنفذ `3000` متضمناً واجهات Frontend و Backend معاً وقاعدة بيانات SQLite الدائمة.
 
-### 3. البناء للإنتاج (Production Build):
+### 3. إنشاء نسخة احتياطية:
+```bash
+npm run backup
+```
+
+### 4. البناء للإنتاج (Production Build):
 ```bash
 npm run build
 npm start

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext.tsx';
-import { X, Copy, Check, Share2, MessageCircle, QrCode } from 'lucide-react';
+import { getPublicShareUrl, copyToClipboard, shareQuestion } from '../utils/api.ts';
+import { X, Copy, Check, Share2, MessageCircle, QrCode, ExternalLink, Globe } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 interface ShareModalProps {
@@ -8,6 +9,7 @@ interface ShareModalProps {
   onClose: () => void;
   pageSlug: string;
   question: string;
+  onNavigateToQuestion?: (slug: string) => void;
 }
 
 export const ShareModal: React.FC<ShareModalProps> = ({
@@ -15,6 +17,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({
   onClose,
   pageSlug,
   question,
+  onNavigateToQuestion,
 }) => {
   const { t, lang } = useAuth();
   const [copied, setCopied] = useState(false);
@@ -22,20 +25,34 @@ export const ShareModal: React.FC<ShareModalProps> = ({
 
   if (!isOpen) return null;
 
-  const origin = window.location.origin;
-  const pageUrl = `${origin}/u/${pageSlug}`;
+  // Use the public shared URL that never throws 403 Forbidden
+  const pageUrl = getPublicShareUrl(pageSlug);
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(pageUrl);
-    setCopied(true);
-    try {
-      confetti({
-        particleCount: 40,
-        spread: 60,
-        origin: { y: 0.7 },
-      });
-    } catch (e) {}
-    setTimeout(() => setCopied(false), 2500);
+  const handleCopy = async () => {
+    const success = await copyToClipboard(pageUrl);
+    if (success) {
+      setCopied(true);
+      try {
+        confetti({
+          particleCount: 40,
+          spread: 60,
+          origin: { y: 0.7 },
+        });
+      } catch (e) {}
+      setTimeout(() => setCopied(false), 2500);
+    }
+  };
+
+  const handleNativeShare = async () => {
+    const res = await shareQuestion({
+      title: question || 'استطلاع رأي مجهول',
+      text: `شارك برأيك بصراحة وبشكل مجهول في استطلاع: "${question}"`,
+      url: pageUrl,
+    });
+    if (res.method === 'clipboard' && res.shared) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    }
   };
 
   const whatsappText = encodeURIComponent(
@@ -82,7 +99,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({
         </div>
 
         {/* URL Box & Copy Button */}
-        <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-slate-950 border border-slate-800 mb-5">
+        <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-slate-950 border border-slate-800 mb-3">
           <input
             type="text"
             readOnly
@@ -92,7 +109,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({
           />
           <button
             onClick={handleCopy}
-            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold shrink-0 transition-all ${
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold shrink-0 transition-all cursor-pointer ${
               copied
                 ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30'
                 : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-600/20'
@@ -101,6 +118,48 @@ export const ShareModal: React.FC<ShareModalProps> = ({
             {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
             <span>{copied ? t('share_copied') : t('share_copy_btn')}</span>
           </button>
+        </div>
+
+        {/* Status Banner */}
+        <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-[11px] text-indigo-300 mb-3">
+          <div className="flex items-center gap-1.5">
+            <Globe className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+            <span>{lang === 'ar' ? 'رابط صفحة السؤال جاهز للمشاركة والتفاعل' : 'Question link is ready to share'}</span>
+          </div>
+          <button
+            onClick={() => {
+              onClose();
+              if (onNavigateToQuestion) onNavigateToQuestion(pageSlug);
+            }}
+            className="text-indigo-400 hover:text-indigo-200 underline font-semibold flex items-center gap-1 shrink-0 cursor-pointer"
+          >
+            <span>{lang === 'ar' ? 'عرض الصفحة' : 'Open Page'}</span>
+            <ExternalLink className="w-3 h-3" />
+          </button>
+        </div>
+
+        {/* Action Buttons: Native Share & In-App View */}
+        <div className="flex flex-col gap-2.5 mb-5">
+          <button
+            onClick={handleNativeShare}
+            className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white text-sm font-bold flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 transition-all cursor-pointer hover:scale-[1.01]"
+          >
+            <Share2 className="w-4 h-4" />
+            <span>{lang === 'ar' ? 'مشاركة عبر التطبيقات (واتساب، تليجرام...)' : 'Share via Apps (WhatsApp, Telegram...)'}</span>
+          </button>
+
+          {onNavigateToQuestion && (
+            <button
+              onClick={() => {
+                onClose();
+                onNavigateToQuestion(pageSlug);
+              }}
+              className="w-full py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs sm:text-sm font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer"
+            >
+              <ExternalLink className="w-4 h-4 text-indigo-400" />
+              <span>{lang === 'ar' ? 'فتح صفحة السؤال مباشرة هنا' : 'Open Question Page Directly Here'}</span>
+            </button>
+          )}
         </div>
 
         {/* Social Share Buttons */}
