@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build && esbuild server.ts --platform=node --packages=external --format=esm --outfile=server.js",
-    "start": "node server.ts",
+    "start": "node server.js",
     "backup": "tsx scripts/backup.ts",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
