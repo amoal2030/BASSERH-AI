@@ -1,16 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User, Language } from '../types/index.ts';
 import { translations } from '../i18n/translations.ts';
-import { signInWithGoogleFirebase, signOutFirebase } from '../firebase.ts';
-import {
-  authFetch,
-  setStoredToken,
-  removeStoredToken,
-  getStoredUser,
-  setStoredUser,
-  getStoredToken,
-  setAppBaseUrl,
-} from '../utils/api.ts';
 
 interface AuthContextType {
   user: User | null;
@@ -19,7 +9,6 @@ interface AuthContextType {
   setLang: (lang: Language) => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
   loginWithGoogle: (credential: string) => Promise<{ success: boolean; error?: string }>;
-  loginWithGoogleFirebase: () => Promise<{ success: boolean; error?: string }>;
   quickLogin: (name?: string, email?: string, avatarIndex?: number) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
   openLoginModal: () => void;
@@ -30,7 +19,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(() => getStoredUser());
+  const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [lang, setLangState] = useState<Language>(() => {
     return (localStorage.getItem('baseera_lang') as Language) || 'ar';
@@ -50,35 +39,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
   }, [lang]);
 
-  // Load config & verify user session on mount
+  // Load user on mount
   useEffect(() => {
-    // Fetch server base config (domain, Google Client ID)
-    fetch('/api/config')
-      .then(res => res.json())
-      .then(cfg => {
-        if (cfg.appUrl) setAppBaseUrl(cfg.appUrl);
-      })
-      .catch(() => {});
-
     const checkAuth = async () => {
       try {
-        const res = await authFetch('/api/auth/me');
+        const res = await fetch('/api/auth/me');
         if (res.ok) {
           const data = await res.json();
-          if (data.authenticated && data.user) {
-            setUser(data.user);
-            setStoredUser(data.user);
-          } else {
-            setUser(null);
-            removeStoredToken();
-          }
-        } else {
-          setUser(null);
-          removeStoredToken();
+          setUser(data.user);
         }
       } catch (err) {
         console.error('Failed to check auth state:', err);
-        setUser(null);
       } finally {
         setIsLoading(false);
       }
@@ -99,57 +70,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const loginWithGoogle = async (credential: string) => {
     try {
-      const res = await authFetch('/api/auth/google', {
+      const res = await fetch('/api/auth/google', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ credential }),
       });
       const data = await res.json();
       if (!res.ok) {
         return { success: false, error: data.error || 'فشل تسجيل الدخول' };
       }
-      if (data.token) {
-        setStoredToken(data.token);
-      }
-      if (data.user) {
-        setStoredUser(data.user);
-        setUser(data.user);
-      }
-      setIsLoginModalOpen(false);
-      return { success: true };
-    } catch (err: any) {
-      return { success: false, error: err.message };
-    }
-  };
-
-  const loginWithGoogleFirebase = async () => {
-    try {
-      const fbResult = await signInWithGoogleFirebase();
-      if (!fbResult.success || !fbResult.user) {
-        return { success: false, error: fbResult.error || 'فشل تسجيل الدخول بحساب جوجل' };
-      }
-
-      const res = await authFetch('/api/auth/firebase-login', {
-        method: 'POST',
-        body: JSON.stringify({
-          uid: fbResult.user.uid,
-          name: fbResult.user.displayName,
-          email: fbResult.user.email,
-          photoURL: fbResult.user.photoURL,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        return { success: false, error: data.error || 'فشل إنشاء أو تحديث المستخدم' };
-      }
-
-      if (data.token) {
-        setStoredToken(data.token);
-      }
-      if (data.user) {
-        setStoredUser(data.user);
-        setUser(data.user);
-      }
+      setUser(data.user);
       setIsLoginModalOpen(false);
       return { success: true };
     } catch (err: any) {
@@ -159,21 +89,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const quickLogin = async (name?: string, email?: string, avatarIndex?: number) => {
     try {
-      const res = await authFetch('/api/auth/quick-login', {
+      const res = await fetch('/api/auth/quick-login', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, email, avatarIndex }),
       });
       const data = await res.json();
       if (!res.ok) {
         return { success: false, error: data.error || 'فشل تسجيل الدخول' };
       }
-      if (data.token) {
-        setStoredToken(data.token);
-      }
-      if (data.user) {
-        setStoredUser(data.user);
-        setUser(data.user);
-      }
+      setUser(data.user);
       setIsLoginModalOpen(false);
       return { success: true };
     } catch (err: any) {
@@ -183,18 +108,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = async () => {
     try {
-      await authFetch('/api/auth/logout', { method: 'POST' });
-      await signOutFirebase();
+      await fetch('/api/auth/logout', { method: 'POST' });
     } catch (e) {
       console.error(e);
-    } finally {
-      removeStoredToken();
-      setUser(null);
     }
+    setUser(null);
   };
-
-  const openLoginModal = () => setIsLoginModalOpen(true);
-  const closeLoginModal = () => setIsLoginModalOpen(false);
 
   return (
     <AuthContext.Provider
@@ -205,11 +124,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setLang,
         t,
         loginWithGoogle,
-        loginWithGoogleFirebase,
         quickLogin,
         logout,
-        openLoginModal,
-        closeLoginModal,
+        openLoginModal: () => setIsLoginModalOpen(true),
+        closeLoginModal: () => setIsLoginModalOpen(false),
         isLoginModalOpen,
       }}
     >

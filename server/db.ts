@@ -1,12 +1,10 @@
-import initSqlJs from 'sql.js';
-import type { Database } from 'sql.js';
+import initSqlJs, { Database } from 'sql.js';
 import fs from 'fs';
 import path from 'path';
 
 let db: Database;
 const DB_DIR = path.resolve(process.cwd(), 'data');
 const DB_FILE = path.join(DB_DIR, 'app.sqlite');
-const BACKUP_DIR = path.resolve(process.cwd(), 'backups');
 
 export interface User {
   id: string;
@@ -26,7 +24,6 @@ export interface Page {
   comments_count: number;
   is_active: number;
   created_at: string;
-  updated_at?: string;
   owner_name?: string;
   owner_image?: string;
 }
@@ -34,7 +31,6 @@ export interface Page {
 export interface Comment {
   id: string;
   page_id: string;
-  user_id?: string;
   anonymous_identifier: string; // Internal hash only, never sent to page owner
   content: string;
   votes_count: number;
@@ -61,33 +57,12 @@ export interface Report {
 export interface AiAnalysisData {
   id: string;
   page_id: string;
-  summary?: string;
-  traits?: string;
-  percentages?: string;
   analysis_json: string;
   analyzed_at: string;
   comments_analyzed_count: number;
-  status?: string;
-  needs_update?: number;
-  created_at?: string;
-  updated_at?: string;
 }
 
-export interface Payment {
-  id: string;
-  user_id: string;
-  page_id: string;
-  package: string;
-  amount: number;
-  currency: string;
-  paypal_order_id: string;
-  paypal_capture_id?: string;
-  status: string; // 'CREATED', 'COMPLETED', 'FAILED', 'CANCELLED'
-  created_at: string;
-  updated_at: string;
-}
-
-// Persist the SQLite database atomically to disk
+// Persist the SQLite database to file
 export function persistDatabase() {
   if (!db) return;
   try {
@@ -96,59 +71,9 @@ export function persistDatabase() {
     }
     const data = db.export();
     const buffer = Buffer.from(data);
-    const tempFile = `${DB_FILE}.tmp.${Date.now()}`;
-    fs.writeFileSync(tempFile, buffer);
-    fs.renameSync(tempFile, DB_FILE);
+    fs.writeFileSync(DB_FILE, buffer);
   } catch (err) {
     console.error('Error saving SQLite database to disk:', err);
-  }
-}
-
-// Create a timestamped backup of the database
-export function backupDatabase(): { success: boolean; filename?: string; path?: string; error?: string } {
-  try {
-    if (!fs.existsSync(BACKUP_DIR)) {
-      fs.mkdirSync(BACKUP_DIR, { recursive: true });
-    }
-    persistDatabase();
-
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const filename = `backup-${timestamp}.sqlite`;
-    const destPath = path.join(BACKUP_DIR, filename);
-
-    if (fs.existsSync(DB_FILE)) {
-      fs.copyFileSync(DB_FILE, destPath);
-      return { success: true, filename, path: destPath };
-    } else {
-      return { success: false, error: 'Database file not found.' };
-    }
-  } catch (err: any) {
-    console.error('Failed to create backup:', err);
-    return { success: false, error: err.message };
-  }
-}
-
-// List all existing backups
-export function listBackups(): { filename: string; size: number; date: string }[] {
-  try {
-    if (!fs.existsSync(BACKUP_DIR)) return [];
-    return fs
-      .readdirSync(BACKUP_DIR)
-      .filter(f => f.endsWith('.sqlite'))
-      .sort()
-      .reverse()
-      .map(filename => {
-        const filePath = path.join(BACKUP_DIR, filename);
-        const stats = fs.statSync(filePath);
-        return {
-          filename,
-          size: stats.size,
-          date: stats.mtime.toISOString(),
-        };
-      });
-  } catch (err) {
-    console.error('Error listing backups:', err);
-    return [];
   }
 }
 
@@ -193,30 +118,18 @@ export async function initDatabase(): Promise<Database> {
       comments_count INTEGER DEFAULT 0,
       is_active INTEGER DEFAULT 1,
       created_at TEXT NOT NULL,
-      updated_at TEXT,
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS comments (
       id TEXT PRIMARY KEY,
       page_id TEXT NOT NULL,
-      user_id TEXT,
       anonymous_identifier TEXT NOT NULL,
       content TEXT NOT NULL,
       votes_count INTEGER DEFAULT 0,
       is_hidden INTEGER DEFAULT 0,
       created_at TEXT NOT NULL,
-      FOREIGN KEY(page_id) REFERENCES pages(id) ON DELETE CASCADE,
-      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS page_participations (
-      page_id TEXT NOT NULL,
-      user_id TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      PRIMARY KEY (page_id, user_id),
-      FOREIGN KEY(page_id) REFERENCES pages(id) ON DELETE CASCADE,
-      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+      FOREIGN KEY(page_id) REFERENCES pages(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS votes (
@@ -240,96 +153,12 @@ export async function initDatabase(): Promise<Database> {
     CREATE TABLE IF NOT EXISTS ai_analyses (
       id TEXT PRIMARY KEY,
       page_id TEXT UNIQUE NOT NULL,
-      summary TEXT,
-      traits TEXT,
-      percentages TEXT,
       analysis_json TEXT NOT NULL,
       analyzed_at TEXT NOT NULL,
       comments_analyzed_count INTEGER NOT NULL,
-      created_at TEXT,
-      updated_at TEXT,
-      FOREIGN KEY(page_id) REFERENCES pages(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS payments (
-      id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL,
-      page_id TEXT NOT NULL,
-      package TEXT NOT NULL,
-      amount REAL NOT NULL,
-      currency TEXT NOT NULL,
-      paypal_order_id TEXT UNIQUE NOT NULL,
-      paypal_capture_id TEXT,
-      status TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
       FOREIGN KEY(page_id) REFERENCES pages(id) ON DELETE CASCADE
     );
   `);
-
-  // Safe schema migrations for existing databases
-  try {
-    db.run('ALTER TABLE pages ADD COLUMN updated_at TEXT;');
-  } catch (e) {}
-  try {
-    db.run('ALTER TABLE ai_analyses ADD COLUMN summary TEXT;');
-  } catch (e) {}
-  try {
-    db.run('ALTER TABLE ai_analyses ADD COLUMN traits TEXT;');
-  } catch (e) {}
-  try {
-    db.run('ALTER TABLE ai_analyses ADD COLUMN percentages TEXT;');
-  } catch (e) {}
-  try {
-    db.run('ALTER TABLE ai_analyses ADD COLUMN created_at TEXT;');
-  } catch (e) {}
-  try {
-    db.run('ALTER TABLE ai_analyses ADD COLUMN updated_at TEXT;');
-  } catch (e) {}
-  try {
-    db.run("ALTER TABLE ai_analyses ADD COLUMN status TEXT DEFAULT 'ready';");
-  } catch (e) {}
-  try {
-    db.run('ALTER TABLE ai_analyses ADD COLUMN needs_update INTEGER DEFAULT 0;');
-  } catch (e) {}
-  try {
-    db.run('ALTER TABLE comments ADD COLUMN user_id TEXT;');
-  } catch (e) {}
-  try {
-    db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_comments_page_user ON comments(page_id, user_id) WHERE user_id IS NOT NULL;');
-  } catch (e) {}
-  try {
-    db.run(`
-      CREATE TABLE IF NOT EXISTS page_participations (
-        page_id TEXT NOT NULL,
-        user_id TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        PRIMARY KEY (page_id, user_id),
-        FOREIGN KEY(page_id) REFERENCES pages(id) ON DELETE CASCADE,
-        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-      );
-    `);
-  } catch (e) {}
-  try {
-    db.run(`
-      CREATE TABLE IF NOT EXISTS payments (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        page_id TEXT NOT NULL,
-        package TEXT NOT NULL,
-        amount REAL NOT NULL,
-        currency TEXT NOT NULL,
-        paypal_order_id TEXT UNIQUE NOT NULL,
-        paypal_capture_id TEXT,
-        status TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
-        FOREIGN KEY(page_id) REFERENCES pages(id) ON DELETE CASCADE
-      );
-    `);
-  } catch (e) {}
 
   persistDatabase();
   seedInitialDataIfEmpty();
@@ -419,7 +248,7 @@ export function createPage(params: {
   const maxComments = params.max_comments || 50;
 
   db.run(
-    'INSERT INTO pages (id, user_id, question, slug, max_comments, comments_count, is_active, created_at, updated_at) VALUES (:id, :user_id, :question, :slug, :max, 0, 1, :created_at, :updated_at)',
+    'INSERT INTO pages (id, user_id, question, slug, max_comments, comments_count, is_active, created_at) VALUES (:id, :user_id, :question, :slug, :max, 0, 1, :created_at)',
     {
       ':id': params.id,
       ':user_id': params.user_id,
@@ -427,7 +256,6 @@ export function createPage(params: {
       ':slug': params.slug,
       ':max': maxComments,
       ':created_at': now,
-      ':updated_at': now,
     }
   );
   persistDatabase();
@@ -441,7 +269,6 @@ export function createPage(params: {
     comments_count: 0,
     is_active: 1,
     created_at: now,
-    updated_at: now,
   };
 }
 
@@ -500,11 +327,9 @@ export function togglePageActive(pageId: string, userId: string): boolean {
   const page = getPageById(pageId);
   if (!page || page.user_id !== userId) return false;
 
-  const now = new Date().toISOString();
   const newStatus = page.is_active === 1 ? 0 : 1;
-  db.run('UPDATE pages SET is_active = :status, updated_at = :now WHERE id = :id', {
+  db.run('UPDATE pages SET is_active = :status WHERE id = :id', {
     ':status': newStatus,
-    ':now': now,
     ':id': pageId,
   });
   persistDatabase();
@@ -515,54 +340,20 @@ export function deletePage(pageId: string, userId: string): boolean {
   const page = getPageById(pageId);
   if (!page || page.user_id !== userId) return false;
 
-  db.run('DELETE FROM reports WHERE comment_id IN (SELECT id FROM comments WHERE page_id = :id)', { ':id': pageId });
-  db.run('DELETE FROM votes WHERE comment_id IN (SELECT id FROM comments WHERE page_id = :id)', { ':id': pageId });
-  db.run('DELETE FROM comments WHERE page_id = :id', { ':id': pageId });
-  db.run('DELETE FROM page_participations WHERE page_id = :id', { ':id': pageId });
-  db.run('DELETE FROM ai_analyses WHERE page_id = :id', { ':id': pageId });
   db.run('DELETE FROM pages WHERE id = :id', { ':id': pageId });
+  db.run('DELETE FROM comments WHERE page_id = :id', { ':id': pageId });
+  db.run('DELETE FROM ai_analyses WHERE page_id = :id', { ':id': pageId });
   persistDatabase();
   return true;
-}
-
-// Check if user (by user_id or anonymous identifier) has already commented on this page
-export function hasUserCommentedOnPage(pageId: string, userId?: string, anonymousIdentifier?: string): boolean {
-  if (userId) {
-    // 1. Check permanent page_participations (survives comment deletion)
-    const partStmt = db.prepare('SELECT 1 FROM page_participations WHERE page_id = :page_id AND user_id = :user_id LIMIT 1');
-    partStmt.bind({ ':page_id': pageId, ':user_id': userId });
-    const hasPart = partStmt.step();
-    partStmt.free();
-    if (hasPart) return true;
-
-    // 2. Check comments table directly by user_id
-    const commStmt = db.prepare('SELECT 1 FROM comments WHERE page_id = :page_id AND user_id = :user_id LIMIT 1');
-    commStmt.bind({ ':page_id': pageId, ':user_id': userId });
-    const hasComm = commStmt.step();
-    commStmt.free();
-    return hasComm;
-  }
-
-  // Only check anonymousIdentifier if no logged-in user_id is provided
-  if (anonymousIdentifier) {
-    const stmt = db.prepare('SELECT 1 FROM comments WHERE page_id = :page_id AND anonymous_identifier = :anon LIMIT 1');
-    stmt.bind({ ':page_id': pageId, ':anon': anonymousIdentifier });
-    const has = stmt.step();
-    stmt.free();
-    return has;
-  }
-
-  return false;
 }
 
 // Comments functions
 export function addComment(params: {
   id: string;
   page_id: string;
-  user_id?: string;
   anonymous_identifier: string;
   content: string;
-}): { success: boolean; comment?: Comment; error?: string; alreadyCommented?: boolean } {
+}): { success: boolean; comment?: Comment; error?: string } {
   const page = getPageById(params.page_id);
   if (!page) {
     return { success: false, error: 'الصفحة غير موجودة' };
@@ -570,15 +361,6 @@ export function addComment(params: {
 
   if (page.is_active === 0) {
     return { success: false, error: 'تم إيقاف استقبال التعليقات على هذه الصفحة مؤقتاً من قبل صاحبها.' };
-  }
-
-  // Enforce single comment per user per page: Backend logic check
-  if (hasUserCommentedOnPage(params.page_id, params.user_id, params.anonymous_identifier)) {
-    return {
-      success: false,
-      alreadyCommented: true,
-      error: 'لقد أرسلت تعليقًا بالفعل على هذه الصفحة.',
-    };
   }
 
   // Count current visible comments
@@ -595,47 +377,20 @@ export function addComment(params: {
   }
 
   const now = new Date().toISOString();
-
-  try {
-    // Record permanent participation if user_id is provided
-    if (params.user_id) {
-      db.run(
-        'INSERT OR IGNORE INTO page_participations (page_id, user_id, created_at) VALUES (:page_id, :user_id, :now)',
-        {
-          ':page_id': params.page_id,
-          ':user_id': params.user_id,
-          ':now': now,
-        }
-      );
+  db.run(
+    'INSERT INTO comments (id, page_id, anonymous_identifier, content, votes_count, is_hidden, created_at) VALUES (:id, :page_id, :anon, :content, 0, 0, :created_at)',
+    {
+      ':id': params.id,
+      ':page_id': params.page_id,
+      ':anon': params.anonymous_identifier,
+      ':content': params.content,
+      ':created_at': now,
     }
+  );
 
-    db.run(
-      'INSERT INTO comments (id, page_id, user_id, anonymous_identifier, content, votes_count, is_hidden, created_at) VALUES (:id, :page_id, :user_id, :anon, :content, 0, 0, :created_at)',
-      {
-        ':id': params.id,
-        ':page_id': params.page_id,
-        ':user_id': params.user_id || null,
-        ':anon': params.anonymous_identifier,
-        ':content': params.content,
-        ':created_at': now,
-      }
-    );
-  } catch (err: any) {
-    // Catch database-level UNIQUE(page_id, user_id) constraint
-    if (err && (err.message?.includes('UNIQUE') || err.message?.includes('constraint'))) {
-      return {
-        success: false,
-        alreadyCommented: true,
-        error: 'لقد أرسلت تعليقًا بالفعل على هذه الصفحة.',
-      };
-    }
-    throw err;
-  }
-
-  // Update page comments_count and updated_at
-  db.run('UPDATE pages SET comments_count = comments_count + 1, updated_at = :now WHERE id = :page_id', {
+  // Update page comments_count
+  db.run('UPDATE pages SET comments_count = comments_count + 1 WHERE id = :page_id', {
     ':page_id': params.page_id,
-    ':now': now,
   });
 
   persistDatabase();
@@ -645,7 +400,6 @@ export function addComment(params: {
     comment: {
       id: params.id,
       page_id: params.page_id,
-      user_id: params.user_id,
       anonymous_identifier: params.anonymous_identifier,
       content: params.content,
       votes_count: 0,
@@ -718,13 +472,11 @@ export function deleteComment(commentId: string, userId: string): boolean {
   const page = getPageById(comment.page_id);
   if (!page || page.user_id !== userId) return false;
 
-  const now = new Date().toISOString();
-  db.run('DELETE FROM reports WHERE comment_id = :id', { ':id': commentId });
-  db.run('DELETE FROM votes WHERE comment_id = :id', { ':id': commentId });
   db.run('DELETE FROM comments WHERE id = :id', { ':id': commentId });
-  db.run('UPDATE pages SET comments_count = MAX(0, comments_count - 1), updated_at = :now WHERE id = :page_id', {
+  db.run('DELETE FROM votes WHERE comment_id = :id', { ':id': commentId });
+  db.run('DELETE FROM reports WHERE comment_id = :id', { ':id': commentId });
+  db.run('UPDATE pages SET comments_count = MAX(0, comments_count - 1) WHERE id = :page_id', {
     ':page_id': comment.page_id,
-    ':now': now,
   });
 
   persistDatabase();
@@ -832,80 +584,26 @@ export function addReport(params: {
 }
 
 // AI Analysis functions
-export function saveAiAnalysis(
-  pageId: string,
-  analysisJson: string,
-  commentsCount: number,
-  status: string = 'ready'
-): void {
+export function saveAiAnalysis(pageId: string, analysisJson: string, commentsCount: number): void {
   const now = new Date().toISOString();
   const id = 'ai_' + Math.random().toString(36).substring(2, 10);
 
-  let summary = '';
-  let traits = '';
-  let percentages = '';
-
-  try {
-    const parsed = typeof analysisJson === 'string' ? JSON.parse(analysisJson) : analysisJson;
-    summary = parsed.summary || '';
-    traits = JSON.stringify(parsed.topTraits || []);
-    percentages = JSON.stringify(
-      (parsed.topTraits || []).map((t: any) => ({
-        trait: t.trait,
-        percentage: t.percentage,
-        category: t.category,
-      }))
-    );
-  } catch (e) {}
-
   // Upsert analysis
-  db.run(
-    `
-    INSERT INTO ai_analyses (id, page_id, summary, traits, percentages, analysis_json, analyzed_at, comments_analyzed_count, status, needs_update, created_at, updated_at)
-    VALUES (:id, :page_id, :summary, :traits, :percentages, :json, :now, :count, :status, 0, :now, :now)
+  db.run(`
+    INSERT INTO ai_analyses (id, page_id, analysis_json, analyzed_at, comments_analyzed_count)
+    VALUES (:id, :page_id, :json, :now, :count)
     ON CONFLICT(page_id) DO UPDATE SET
-      summary = :summary,
-      traits = :traits,
-      percentages = :percentages,
       analysis_json = :json,
       analyzed_at = :now,
-      comments_analyzed_count = :count,
-      status = :status,
-      needs_update = 0,
-      updated_at = :now
-  `,
-    {
-      ':id': id,
-      ':page_id': pageId,
-      ':summary': summary,
-      ':traits': traits,
-      ':percentages': percentages,
-      ':json': analysisJson,
-      ':now': now,
-      ':count': commentsCount,
-      ':status': status,
-    }
-  );
+      comments_analyzed_count = :count
+  `, {
+    ':id': id,
+    ':page_id': pageId,
+    ':json': analysisJson,
+    ':now': now,
+    ':count': commentsCount,
+  });
 
-  persistDatabase();
-}
-
-export function markAiAnalysisNeedsUpdate(pageId: string): void {
-  const now = new Date().toISOString();
-  const existing = getAiAnalysis(pageId);
-  if (existing) {
-    db.run(
-      `UPDATE ai_analyses SET status = 'updating', needs_update = 1, updated_at = :now WHERE page_id = :page_id`,
-      { ':page_id': pageId, ':now': now }
-    );
-  } else {
-    const id = 'ai_' + Math.random().toString(36).substring(2, 10);
-    db.run(
-      `INSERT INTO ai_analyses (id, page_id, summary, traits, percentages, analysis_json, analyzed_at, comments_analyzed_count, status, needs_update, created_at, updated_at)
-       VALUES (:id, :page_id, '', '[]', '[]', '{}', :now, 0, 'updating', 1, :now, :now)`,
-      { ':id': id, ':page_id': pageId, ':now': now }
-    );
-  }
   persistDatabase();
 }
 
@@ -1058,101 +756,4 @@ function seedInitialDataIfEmpty() {
 
     persistDatabase();
   }
-}
-
-// Payment & Package Upgrade Database Functions
-export function updatePageMaxComments(pageId: string, newMax: number): boolean {
-  const page = getPageById(pageId);
-  if (!page) return false;
-  const now = new Date().toISOString();
-  db.run('UPDATE pages SET max_comments = :max, updated_at = :now WHERE id = :id', {
-    ':max': newMax,
-    ':now': now,
-    ':id': pageId,
-  });
-  persistDatabase();
-  return true;
-}
-
-export function createPaymentRecord(data: {
-  id: string;
-  user_id: string;
-  page_id: string;
-  package: string;
-  amount: number;
-  currency: string;
-  paypal_order_id: string;
-  status: string;
-}): Payment {
-  const now = new Date().toISOString();
-  db.run(
-    `INSERT INTO payments (id, user_id, page_id, package, amount, currency, paypal_order_id, status, created_at, updated_at)
-     VALUES (:id, :user_id, :page_id, :package, :amount, :currency, :order_id, :status, :now, :now)`,
-    {
-      ':id': data.id,
-      ':user_id': data.user_id,
-      ':page_id': data.page_id,
-      ':package': data.package,
-      ':amount': data.amount,
-      ':currency': data.currency,
-      ':order_id': data.paypal_order_id,
-      ':status': data.status,
-      ':now': now,
-    }
-  );
-  persistDatabase();
-  return {
-    ...data,
-    created_at: now,
-    updated_at: now,
-  };
-}
-
-export function getPaymentByOrderId(orderId: string): Payment | null {
-  const stmt = db.prepare('SELECT * FROM payments WHERE paypal_order_id = :oid LIMIT 1');
-  stmt.bind({ ':oid': orderId });
-  if (stmt.step()) {
-    const row = stmt.getAsObject() as unknown as Payment;
-    stmt.free();
-    return row;
-  }
-  stmt.free();
-  return null;
-}
-
-export function updatePaymentStatus(orderId: string, status: string, captureId?: string): boolean {
-  const now = new Date().toISOString();
-  if (captureId) {
-    db.run(
-      'UPDATE payments SET status = :status, paypal_capture_id = :cid, updated_at = :now WHERE paypal_order_id = :oid',
-      {
-        ':status': status,
-        ':cid': captureId,
-        ':now': now,
-        ':oid': orderId,
-      }
-    );
-  } else {
-    db.run(
-      'UPDATE payments SET status = :status, updated_at = :now WHERE paypal_order_id = :oid',
-      {
-        ':status': status,
-        ':now': now,
-        ':oid': orderId,
-      }
-    );
-  }
-  persistDatabase();
-  return true;
-}
-
-export function getUserPayments(userId: string): Payment[] {
-  const stmt = db.prepare('SELECT * FROM payments WHERE user_id = :uid ORDER BY created_at DESC');
-  stmt.bind({ ':uid': userId });
-  const list: Payment[] = [];
-  while (stmt.step()) {
-    list.push(stmt.getAsObject() as unknown as Payment);
-  }
-  stmt.free();
-  return list;
 }

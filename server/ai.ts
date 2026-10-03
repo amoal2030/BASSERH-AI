@@ -48,14 +48,7 @@ export async function analyzeCommentsWithAI(
 
   if (apiKey) {
     try {
-      const ai = new GoogleGenAI({
-        apiKey,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          },
-        },
-      });
+      const ai = new GoogleGenAI({});
       const prompt = `
 أنت محلل نفسي ولغوي ذكي ومحايد. أمامك سؤال طرحه شخص ومجموعة من التعليقات المجهولة التي كتبها أصدقاؤه أو متابعوه:
 السؤال: "${question}"

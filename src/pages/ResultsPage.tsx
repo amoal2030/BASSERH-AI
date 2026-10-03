@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext.tsx';
-import { authFetch } from '../utils/api.ts';
 import { Page, Comment, AiAnalysis } from '../types/index.ts';
 import {
   Sparkles,
@@ -18,7 +17,6 @@ import {
   AlertCircle,
   HelpCircle,
   Award,
-  Lock,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -33,14 +31,13 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({
   onBackToQuestion,
   onOpenShare,
 }) => {
-  const { user, t, lang } = useAuth();
+  const { t, lang } = useAuth();
   const [page, setPage] = useState<Page | null>(null);
   const [analysis, setAnalysis] = useState<AiAnalysis | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
-  const [forbidden, setForbidden] = useState(false);
   const [copied, setCopied] = useState(false);
 
   const ArrowIcon = lang === 'ar' ? ArrowRight : ArrowLeft;
@@ -48,8 +45,7 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({
   const loadData = async () => {
     try {
       setLoading(true);
-      setForbidden(false);
-      const pRes = await authFetch(`/api/pages/${slug}`);
+      const pRes = await fetch(`/api/pages/${slug}`);
       if (!pRes.ok) {
         setErrorMsg('الصفحة غير موجودة.');
         setLoading(false);
@@ -58,20 +54,8 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({
       const pData = await pRes.json();
       setPage(pData.page);
 
-      // Strict client-side check as well
-      if (!user || user.id !== pData.page.user_id) {
-        setForbidden(true);
-        setLoading(false);
-        return;
-      }
-
-      // Fetch existing analysis with auth
-      const aRes = await authFetch(`/api/pages/${pData.page.id}/analysis`);
-      if (aRes.status === 403) {
-        setForbidden(true);
-        setLoading(false);
-        return;
-      }
+      // Fetch existing analysis
+      const aRes = await fetch(`/api/pages/${pData.page.id}/analysis`);
       if (aRes.ok) {
         const aData = await aRes.json();
         if (aData.hasAnalysis && aData.analysis) {
@@ -80,7 +64,7 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({
       }
 
       // Fetch comments to show top agreed
-      const cRes = await authFetch(`/api/pages/${pData.page.id}/comments?sort=votes`);
+      const cRes = await fetch(`/api/pages/${pData.page.id}/comments?sort=votes`);
       if (cRes.ok) {
         const cData = await cRes.json();
         setComments(cData.comments || []);
@@ -94,7 +78,7 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({
 
   useEffect(() => {
     loadData();
-  }, [slug, user]);
+  }, [slug]);
 
   const handleRunAnalysis = async () => {
     if (!page) return;
@@ -102,7 +86,7 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({
     setErrorMsg('');
 
     try {
-      const res = await authFetch(`/api/pages/${page.id}/analyze`, { method: 'POST' });
+      const res = await fetch(`/api/pages/${page.id}/analyze`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok) {
         setErrorMsg(data.error || 'فشل التحليل');
@@ -144,33 +128,6 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({
         <p className="text-xs text-slate-400">
           {lang === 'ar' ? 'جاري استرجاع النتائج والتحليلات...' : 'Loading results...'}
         </p>
-      </div>
-    );
-  }
-
-  if (forbidden) {
-    return (
-      <div className="max-w-md mx-auto my-16 sm:my-24 p-6 sm:p-8 rounded-3xl bg-slate-900 border border-slate-800 text-center shadow-2xl">
-        <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center">
-          <Lock className="w-8 h-8" />
-        </div>
-        <span className="inline-block px-3 py-1 rounded-full bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-bold mb-3">
-          403 Forbidden
-        </span>
-        <h2 className="text-xl font-extrabold text-white mb-2">
-          {lang === 'ar' ? 'تحليل الذكاء الاصطناعي متاح لصاحب السؤال فقط' : 'AI Analysis is Restricted to Question Owner'}
-        </h2>
-        <p className="text-xs sm:text-sm text-slate-400 mb-6 leading-relaxed">
-          {lang === 'ar'
-            ? 'للحفاظ على الخصوصية، لا يمكن لأي زائر أو مشارك الاطلاع على تحليل الذكاء الاصطناعي. هذا التقرير مخصص لصاحب السؤال فقط داخل لوحة التحكم الخاصة به.'
-            : 'For privacy, visitors cannot view AI analysis. This report is restricted to the question owner inside their private dashboard.'}
-        </p>
-        <button
-          onClick={onBackToQuestion}
-          className="w-full py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 transition-all cursor-pointer"
-        >
-          <span>{lang === 'ar' ? 'العودة لصفحة السؤال العامة' : 'Return to Public Question'}</span>
-        </button>
       </div>
     );
   }

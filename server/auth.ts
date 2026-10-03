@@ -1,7 +1,6 @@
-import type { Request, Response, NextFunction } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
-import { createOrUpdateUser, getUserById } from './db.ts';
-import type { User } from './db.ts';
+import { User, createOrUpdateUser, getUserById } from './db.js';
 
 // Simple signed session store / JWT-like token for user sessions
 const SESSION_SECRET = process.env.SESSION_SECRET || 'baseera-secret-token-key-2026';
@@ -42,30 +41,19 @@ export function verifySessionToken(token: string): string | null {
   return null;
 }
 
-// Middleware to extract user from Authorization header or Session Cookie
+// Middleware to extract user
 export function authMiddleware(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   let token = '';
 
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
-    const candidate = authHeader.substring(7).trim();
-    if (candidate && candidate !== 'null' && candidate !== 'undefined') {
-      token = candidate;
-    }
-  }
-
-  // If no bearer token from header, check Session Cookie
-  if (!token && req.cookies && req.cookies.baseera_session) {
+    token = authHeader.substring(7);
+  } else if (req.cookies && req.cookies.baseera_session) {
     token = req.cookies.baseera_session;
   }
 
   if (token) {
-    let userId = verifySessionToken(token);
-    // If bearer token failed (e.g. stale in localStorage), fallback to cookie
-    if (!userId && req.cookies && req.cookies.baseera_session && req.cookies.baseera_session !== token) {
-      userId = verifySessionToken(req.cookies.baseera_session);
-    }
-
+    const userId = verifySessionToken(token);
     if (userId) {
       const user = getUserById(userId);
       if (user) {
@@ -80,7 +68,7 @@ export function authMiddleware(req: AuthenticatedRequest, res: Response, next: N
 // Require authenticated user
 export function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   if (!req.user) {
-    res.status(401).json({ error: 'يجب تسجيل الدخول أولًا.' });
+    res.status(401).json({ error: 'يرجى تسجيل الدخول أولاً للمتابعة.' });
     return;
   }
   next();
@@ -110,22 +98,13 @@ export function parseGoogleCredential(credentialToken: string): {
   }
 }
 
-// Anonymous identifier generator: Hashes user ID if logged in, or IP + visitor salt to prevent exposing client info
+// Anonymous identifier generator: Hashes IP + visitor salt to prevent exposing client info
 export function getAnonymousIdentifier(req: Request): string {
-  const authReq = req as AuthenticatedRequest;
-  if (authReq.user && authReq.user.id) {
-    return crypto
-      .createHash('sha256')
-      .update(`user-${authReq.user.id}-${process.env.ANON_SALT || 'salt_baseera_2026'}`)
-      .digest('hex')
-      .substring(0, 24);
-  }
-
   const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
   const userAgent = req.headers['user-agent'] || '';
   const clientCookieId = req.cookies?.baseera_vid || '';
 
-  // Combine them with a salt so it's consistent for duplicate vote/comment checks, but irreversible and privacy-preserving
+  // Combine them with a daily salt so it's consistent for duplicate vote checks, but irreversible and privacy-preserving
   return crypto
     .createHash('sha256')
     .update(`${ip}-${userAgent}-${clientCookieId}-${process.env.ANON_SALT || 'salt_baseera_2026'}`)
