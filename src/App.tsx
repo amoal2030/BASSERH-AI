@@ -4,6 +4,7 @@ import { Navbar } from './components/Navbar.tsx';
 import { HomePage } from './pages/HomePage.tsx';
 import { DashboardPage } from './pages/DashboardPage.tsx';
 import { PublicQuestionPage } from './pages/PublicQuestionPage.tsx';
+import { ResultsPage } from './pages/ResultsPage.tsx';
 import { LoginModal } from './components/LoginModal.tsx';
 import { CreatePageModal } from './components/CreatePageModal.tsx';
 import { ShareModal } from './components/ShareModal.tsx';
@@ -14,7 +15,7 @@ import { PaymentSuccessPage } from './pages/PaymentSuccessPage.tsx';
 import { PaymentCancelPage } from './pages/PaymentCancelPage.tsx';
 import { Page } from './types/index.ts';
 
-type AppViewType = 'home' | 'dashboard' | 'public' | 'payment_success' | 'payment_cancel';
+type AppViewType = 'home' | 'dashboard' | 'public' | 'results' | 'payment_success' | 'payment_cancel';
 
 const parseCurrentRoute = () => {
   if (typeof window === 'undefined') return { view: 'home' as AppViewType, slug: 'omar-traits' };
@@ -39,9 +40,10 @@ const parseCurrentRoute = () => {
     }
 
     const qSlug = urlParams.get('q') || urlParams.get('u') || urlParams.get('page') || urlParams.get('slug');
+    const isResults = urlParams.get('view') === 'results' || window.location.search.includes('results');
     if (qSlug && qSlug.trim()) {
       return {
-        view: 'public' as AppViewType,
+        view: isResults ? ('results' as AppViewType) : ('public' as AppViewType),
         slug: decodeURIComponent(qSlug.trim()),
       };
     }
@@ -55,6 +57,7 @@ const parseCurrentRoute = () => {
     if (hash.startsWith('#/q/') || hash.startsWith('#/u/')) {
       const parts = hash.substring(4).split('/');
       const slug = decodeURIComponent(parts[0] || 'omar-traits');
+      if (parts[1] === 'results') return { view: 'results' as AppViewType, slug };
       return { view: 'public' as AppViewType, slug };
     }
     if (hash.startsWith('#q=') || hash.startsWith('#u=')) {
@@ -74,6 +77,9 @@ const parseCurrentRoute = () => {
       slug = decodeURIComponent(parts[0] || 'omar-traits');
     } catch (e) {
       slug = parts[0] || 'omar-traits';
+    }
+    if (parts[1] === 'results') {
+      return { view: 'results' as AppViewType, slug };
     }
     return { view: 'public' as AppViewType, slug };
   }
@@ -154,6 +160,7 @@ function MainApp() {
     let targetPath = '/';
     if (view === 'dashboard') targetPath = '/dashboard';
     else if (view === 'public' && slug) targetPath = `/q/${slug}`;
+    else if (view === 'results' && slug) targetPath = `/q/${slug}/results`;
     else if (view === 'payment_success') targetPath = '/payment/success';
     else if (view === 'payment_cancel') targetPath = '/payment/cancel';
 
@@ -232,6 +239,7 @@ function MainApp() {
             onOpenShare={(slug, question) =>
               setShareData({ isOpen: true, slug, question })
             }
+            onOpenResults={slug => navigateTo('results', slug)}
             onOpenPublic={slug => navigateTo('public', slug)}
             onOpenUpgrade={page => setUpgradeData({ isOpen: true, page })}
           />
@@ -260,6 +268,17 @@ function MainApp() {
             }
             onOpenReport={commentId =>
               setReportData({ isOpen: true, commentId })
+            }
+            onOpenResults={slug => navigateTo('results', slug)}
+          />
+        )}
+
+        {currentView === 'results' && (
+          <ResultsPage
+            slug={activeSlug}
+            onBackToQuestion={() => navigateTo('public', activeSlug)}
+            onOpenShare={(slug, question) =>
+              setShareData({ isOpen: true, slug, question })
             }
           />
         )}

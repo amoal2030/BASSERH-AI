@@ -18,7 +18,6 @@ import {
   deletePage,
   addComment,
   getPageComments,
-  getCommentById,
   deleteComment,
   toggleHideComment,
   toggleVote,
@@ -53,27 +52,6 @@ const app = express();
 const PORT = 3000;
 const isProduction = process.env.NODE_ENV === 'production';
 
-// Trust proxy for Cloud Run, Cloudflare, GFE, and mobile proxies
-app.set('trust proxy', true);
-
-// Comprehensive Request Logger for Diagnostics
-app.use((req, res, next) => {
-  const start = Date.now();
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
-  const userAgent = req.headers['user-agent'] || 'unknown';
-  const referer = req.headers['referer'] || 'none';
-  const origin = req.headers['origin'] || 'none';
-
-  res.on('finish', () => {
-    const duration = Date.now() - start;
-    console.log(
-      `[REQ_LOG] ${req.method} ${req.originalUrl} -> Status: ${res.statusCode} (${duration}ms) | IP: ${ip} | Origin: ${origin} | Referer: ${referer} | UA: ${userAgent.slice(0, 80)}`
-    );
-  });
-
-  next();
-});
-
 // Middleware
 app.use(express.json());
 app.use(cookieParser());
@@ -87,73 +65,13 @@ app.use(
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: [
-      'Content-Type',
-      'Authorization',
-      'X-Requested-With',
-      'Accept',
-      'Origin',
-      'User-Agent',
-      'Cache-Control',
-      'X-Forwarded-For',
-      'Sec-CH-UA',
-      'Sec-CH-UA-Mobile',
-      'Sec-CH-UA-Platform',
-    ],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   })
 );
-app.options('*', cors());
 
 // Initialize SQLite database
 await initDatabase();
 console.log('Database initialized successfully.');
-
-// Ensure Nginx reverse proxy allows public question routes and assets without AI Studio auth
-try {
-  const luaFile = '/etc/nginx/user_auth_verification.lua';
-  if (fs.existsSync(luaFile)) {
-    let lua = fs.readFileSync(luaFile, 'utf8');
-    const target = 'if ngx.var.host == "localhost" then\n  return\nend';
-    const bypassSnippet = `-- Allow public routes (questions, APIs, assets) to bypass AI Studio auth bridge
-local req_uri = ngx.var.uri or ""
-if string.match(req_uri, "^/q") or
-   string.match(req_uri, "^/u") or
-   string.match(req_uri, "^/api/") or
-   string.match(req_uri, "^/assets") or
-   string.match(req_uri, "^/node_modules/") or
-   string.match(req_uri, "^/@") or
-   string.match(req_uri, "^/src") or
-   string.match(req_uri, "^/favicon") or
-   string.match(req_uri, "^/manifest") or
-   string.match(req_uri, "%.js") or
-   string.match(req_uri, "%.css") or
-   string.match(req_uri, "%.mjs") or
-   string.match(req_uri, "%.ts") or
-   string.match(req_uri, "%.tsx") or
-   string.match(req_uri, "%.svg") or
-   string.match(req_uri, "%.png") or
-   string.match(req_uri, "%.woff") or
-   req_uri == "/" or req_uri == "" then
-  return
-end`;
-    if (!lua.includes('^/node_modules/')) {
-      if (lua.includes('-- Allow public routes (questions, APIs, assets)')) {
-        // Replace existing snippet
-        const regex = /-- Allow public routes[\s\S]*?return\s+end/;
-        lua = lua.replace(regex, bypassSnippet);
-      } else {
-        lua = lua.replace(target, `${target}\n\n${bypassSnippet}`);
-      }
-      fs.writeFileSync(luaFile, lua, 'utf8');
-      import('child_process').then(cp => {
-        cp.exec('nginx -s reload');
-      });
-      console.log('Nginx public routes bypass configured and reloaded.');
-    }
-  }
-} catch (e) {
-  // Gracefully ignored in non-container/local environments
-}
 
 // Auth middleware for all API requests
 app.use('/api', authMiddleware);
@@ -168,88 +86,11 @@ const SESSION_COOKIE_OPTIONS = {
 };
 
 // --- Auth Routes ---
-let firebaseConfig: any = {};
-try {
-  const fbPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
-  if (fs.existsSync(fbPath)) {
-    firebaseConfig = JSON.parse(fs.readFileSync(fbPath, 'utf-8'));
-  }
-} catch (e) {}
-
 app.get('/api/config', (req: Request, res: Response) => {
-  let appUrl = process.env.APP_URL || '';
-  if (!appUrl && req.headers.host) {
-    const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'https';
-    appUrl = `${proto}://${req.headers.host}`;
-  }
-
-  const googleClientId = process.env.GOOGLE_CLIENT_ID || firebaseConfig.oAuthClientId || '';
-
   res.json({
-    googleClientId,
-    appUrl,
+    googleClientId: process.env.GOOGLE_CLIENT_ID || '',
+    appUrl: process.env.APP_URL || '',
   });
-});
-
-// Direct Google OAuth URL with prompt=select_account
-app.get('/api/auth/google/url', (req: Request, res: Response) => {
-  const clientId = process.env.GOOGLE_CLIENT_ID || firebaseConfig.oAuthClientId || '';
-  const appUrl = process.env.APP_URL || `${req.protocol}://${req.headers.host}`;
-  const redirectUri = `${appUrl}/api/auth/google/callback`;
-  const state = crypto.randomBytes(16).toString('hex');
-  const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent('openid email profile')}&prompt=select_account&state=${state}`;
-
-  res.json({ url: googleAuthUrl });
-});
-
-// Direct Google OAuth Callback
-app.get('/api/auth/google/callback', async (req: Request, res: Response) => {
-  try {
-    const { code } = req.query;
-    if (!code || typeof code !== 'string') {
-      res.redirect('/?error=no_code');
-      return;
-    }
-
-    const clientId = process.env.GOOGLE_CLIENT_ID || firebaseConfig.oAuthClientId || '';
-    const clientSecret = process.env.GOOGLE_CLIENT_SECRET || '';
-    const appUrl = process.env.APP_URL || `${req.protocol}://${req.headers.host}`;
-    const redirectUri = `${appUrl}/api/auth/google/callback`;
-
-    if (clientSecret) {
-      const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          code,
-          client_id: clientId,
-          client_secret: clientSecret,
-          redirect_uri: redirectUri,
-          grant_type: 'authorization_code',
-        }),
-      });
-      const tokenData: any = await tokenRes.json();
-      if (tokenData.id_token) {
-        const payload = parseGoogleCredential(tokenData.id_token);
-        if (payload) {
-          const user = createOrUpdateUser({
-            id: 'usr_' + crypto.randomBytes(6).toString('hex'),
-            google_id: payload.sub,
-            name: payload.name,
-            email: payload.email,
-            profile_image: payload.picture,
-          });
-          const token = createSessionToken(user.id);
-          res.cookie(SESSION_COOKIE_NAME, token, SESSION_COOKIE_OPTIONS);
-          res.redirect('/dashboard');
-          return;
-        }
-      }
-    }
-    res.redirect('/dashboard');
-  } catch (e) {
-    res.redirect('/?error=oauth_failed');
-  }
 });
 
 app.post('/api/auth/google', async (req: Request, res: Response) => {
@@ -284,7 +125,6 @@ app.post('/api/auth/google', async (req: Request, res: Response) => {
       token,
       user: {
         id: user.id,
-        google_id: user.google_id,
         name: user.name,
         email: user.email,
         profile_image: user.profile_image,
@@ -297,51 +137,29 @@ app.post('/api/auth/google', async (req: Request, res: Response) => {
   }
 });
 
-// Firebase Google Login endpoint with token payload extraction
+// Firebase Google Login endpoint
 app.post('/api/auth/firebase-login', async (req: Request, res: Response) => {
   try {
-    const { uid, email, name, photoURL, idToken } = req.body;
-
-    let googleId = uid;
-    let userEmail = email;
-    let userName = name;
-    let userImage = photoURL;
-
-    // Decode token claims directly to prevent spoofing or stale client state
-    if (idToken && typeof idToken === 'string') {
-      try {
-        const parts = idToken.split('.');
-        if (parts.length === 3) {
-          const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf-8'));
-          const sub = payload.firebase?.identities?.['google.com']?.[0] || payload.sub;
-          if (sub) googleId = sub;
-          if (payload.email) userEmail = payload.email;
-          if (payload.name) userName = payload.name;
-          if (payload.picture) userImage = payload.picture;
-        }
-      } catch (err) {
-        console.warn('Could not decode idToken payload:', err);
-      }
-    }
-
-    if (!googleId) {
+    const { uid, email, name, photoURL } = req.body;
+    if (!uid) {
       res.status(400).json({ error: 'بيانات حساب Google غير مكتملة.' });
       return;
     }
 
-    const finalName = userName?.trim() || userEmail?.split('@')[0] || 'User';
-    const finalEmail = userEmail?.trim() || `${googleId}@google.user`;
-    const finalImage = userImage || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80';
+    const userName = name || email?.split('@')[0] || 'User';
+    const userEmail = email || `${uid}@firebase.user`;
+    const userImage = photoURL || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80';
 
     const user = createOrUpdateUser({
       id: 'usr_' + crypto.randomBytes(6).toString('hex'),
-      google_id: googleId,
-      name: finalName,
-      email: finalEmail,
-      profile_image: finalImage,
+      google_id: uid,
+      name: userName,
+      email: userEmail,
+      profile_image: userImage,
     });
 
     const token = createSessionToken(user.id);
+
     res.cookie(SESSION_COOKIE_NAME, token, SESSION_COOKIE_OPTIONS);
 
     res.json({
@@ -349,7 +167,6 @@ app.post('/api/auth/firebase-login', async (req: Request, res: Response) => {
       token,
       user: {
         id: user.id,
-        google_id: user.google_id,
         name: user.name,
         email: user.email,
         profile_image: user.profile_image,
@@ -417,7 +234,6 @@ app.get('/api/auth/me', (req: AuthenticatedRequest, res: Response) => {
     authenticated: true,
     user: {
       id: req.user.id,
-      google_id: req.user.google_id,
       name: req.user.name,
       email: req.user.email,
       profile_image: req.user.profile_image,
@@ -432,14 +248,6 @@ app.post('/api/auth/logout', (req: Request, res: Response) => {
     secure: true,
     sameSite: 'none',
     path: '/',
-  });
-  res.cookie(SESSION_COOKIE_NAME, '', {
-    httpOnly: true,
-    secure: true,
-    sameSite: 'none',
-    path: '/',
-    expires: new Date(0),
-    maxAge: 0,
   });
   res.json({ success: true, authenticated: false });
 });
@@ -513,15 +321,15 @@ app.get('/api/pages', requireAuth, (req: AuthenticatedRequest, res: Response) =>
   }
 });
 
-const handleGetPublicPage = (req: Request, res: Response) => {
+app.get('/api/pages/:slug', (req: Request, res: Response) => {
   try {
-    const rawSlug = req.params.slug || req.params.id;
+    const rawSlug = req.params.slug;
     let decodedSlug = rawSlug;
     try {
       decodedSlug = decodeURIComponent(rawSlug);
     } catch (e) {}
 
-    const page = getPageBySlug(decodedSlug) || getPageBySlug(rawSlug) || getPageById(decodedSlug) || getPageById(rawSlug);
+    const page = getPageBySlug(decodedSlug) || getPageBySlug(rawSlug);
     if (!page) {
       res.status(404).json({ error: 'الصفحة غير موجودة أو تم حذفها.' });
       return;
@@ -529,7 +337,7 @@ const handleGetPublicPage = (req: Request, res: Response) => {
 
     // Ensure privacy: page owner identity is shown (name + avatar) as they asked the question,
     // but commenters remain strictly anonymous.
-    res.status(200).json({
+    res.json({
       page: {
         id: page.id,
         user_id: page.user_id,
@@ -548,11 +356,7 @@ const handleGetPublicPage = (req: Request, res: Response) => {
     console.error('Error fetching page:', err);
     res.status(500).json({ error: 'حدث خطأ في النظام.' });
   }
-};
-
-app.get('/api/pages/:slug', handleGetPublicPage);
-app.get('/api/pages/by-id/:id', handleGetPublicPage);
-app.get('/api/pages/id/:id', handleGetPublicPage);
+});
 
 app.patch('/api/pages/:id/toggle', requireAuth, (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -676,7 +480,6 @@ app.post('/api/pages/:id/comments', requireAuth, (req: AuthenticatedRequest, res
 
     res.json({
       success: true,
-      message: 'تم إرسال تعليقك بنجاح.',
       comment: {
         id: result.comment!.id,
         page_id: result.comment!.page_id,
@@ -695,14 +498,11 @@ app.post('/api/pages/:id/comments', requireAuth, (req: AuthenticatedRequest, res
 app.delete('/api/comments/:id', requireAuth, (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
-    const comment = getCommentById(id);
+    // Find comment to know which page it belongs to
     const success = deleteComment(id, req.user!.id);
     if (!success) {
       res.status(403).json({ error: 'غير مصرح بحذف هذا التعليق.' });
       return;
-    }
-    if (comment) {
-      triggerAutoAiAnalysis(comment.page_id);
     }
     res.json({ success: true });
   } catch (err: any) {
@@ -713,14 +513,10 @@ app.delete('/api/comments/:id', requireAuth, (req: AuthenticatedRequest, res: Re
 app.patch('/api/comments/:id/hide', requireAuth, (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
-    const comment = getCommentById(id);
     const success = toggleHideComment(id, req.user!.id);
     if (!success) {
       res.status(403).json({ error: 'غير مصرح بتعديل هذا التعليق.' });
       return;
-    }
-    if (comment) {
-      triggerAutoAiAnalysis(comment.page_id);
     }
     res.json({ success: true });
   } catch (err: any) {
@@ -780,26 +576,17 @@ app.post('/api/comments/:id/report', (req: Request, res: Response) => {
 
 // --- AI Analysis Background Engine & Routes (Strictly for Page Owners Only) ---
 const activeAiAnalyses = new Set<string>();
-const lastAiExecutionTimes = new Map<string, number>();
 
 export async function triggerAutoAiAnalysis(pageId: string): Promise<void> {
   // Mark in database immediately that analysis is updating
   markAiAnalysisNeedsUpdate(pageId);
 
-  const now = Date.now();
-  const lastRun = lastAiExecutionTimes.get(pageId) || 0;
-  if (now - lastRun < 12000) {
-    // Respect API rate limits; database remains flagged as needs_update
-    return;
-  }
-
   if (activeAiAnalyses.has(pageId)) {
-    // Analysis is already in-flight for this page
+    // Analysis is already in-flight for this page; the needs_update flag in DB ensures fresh update
     return;
   }
 
   activeAiAnalyses.add(pageId);
-  lastAiExecutionTimes.set(pageId, now);
 
   // Execute asynchronously in background so comment creation is completely non-blocking
   setImmediate(async () => {
@@ -807,7 +594,7 @@ export async function triggerAutoAiAnalysis(pageId: string): Promise<void> {
       const page = getPageById(pageId);
       if (!page) return;
 
-      const comments = getPageComments(pageId, undefined, 'newest', false);
+      const comments = getPageComments(pageId, undefined, 'votes', false);
       if (comments.length === 0) {
         return;
       }
@@ -816,9 +603,8 @@ export async function triggerAutoAiAnalysis(pageId: string): Promise<void> {
       const commentTexts = comments.map(c => c.content.trim()).filter(Boolean);
       if (commentTexts.length === 0) return;
 
-      const analysis = await analyzeCommentsWithAI(page.question, commentTexts, pageId);
+      const analysis = await analyzeCommentsWithAI(page.question, commentTexts);
       saveAiAnalysis(pageId, JSON.stringify(analysis), comments.length, 'ready');
-      console.log('Analysis saved: YES');
       console.log(`[AI Auto-Analysis] Updated successfully for page "${page.question}" (${comments.length} comments).`);
     } catch (err: any) {
       console.warn(`[AI Auto-Analysis] Execution deferred or error for page ${pageId}:`, err?.message || err);
@@ -830,7 +616,7 @@ export async function triggerAutoAiAnalysis(pageId: string): Promise<void> {
 }
 
 // Protected: Only authenticated page owner can view AI analysis
-const handleGetAiAnalysis = (req: AuthenticatedRequest, res: Response) => {
+app.get('/api/pages/:id/analysis', requireAuth, (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
     const page = getPageById(id);
@@ -848,9 +634,7 @@ const handleGetAiAnalysis = (req: AuthenticatedRequest, res: Response) => {
     }
 
     const cached = getAiAnalysis(id);
-    const comments = getPageComments(id, undefined, 'newest', false);
-    const commentTexts = comments.map(c => c.content.trim()).filter(Boolean);
-    const currentHash = crypto.createHash('sha256').update(commentTexts.join('\n')).digest('hex');
+    const comments = getPageComments(id, undefined, 'votes', false);
 
     // If no analysis exists yet but comments exist, trigger auto-analysis now
     if (!cached) {
@@ -875,47 +659,36 @@ const handleGetAiAnalysis = (req: AuthenticatedRequest, res: Response) => {
       return;
     }
 
-    let parsed: any = null;
-    try {
-      parsed = JSON.parse(cached.analysis_json);
-    } catch (e) {}
-
-    // Check both count AND content hash: if either changed, the cached analysis is stale!
-    const isCountStale = comments.length !== cached.comments_analyzed_count;
-    const isContentStale = Boolean(parsed && parsed.commentsHash && parsed.commentsHash !== currentHash);
-    const isStale = isCountStale || isContentStale || cached.needs_update === 1;
-
-    // If comments count or content changed since last analysis, trigger background refresh
+    // If comments count changed since last analysis, trigger background refresh
+    const isStale = comments.length !== cached.comments_analyzed_count;
     if (isStale && !activeAiAnalyses.has(id)) {
       triggerAutoAiAnalysis(id);
     }
 
-    const isUpdating = activeAiAnalyses.has(id) || cached.status === 'updating' || cached.needs_update === 1 || isStale;
-    const newCommentsCount = Math.max(0, comments.length - cached.comments_analyzed_count);
+    let parsed = null;
+    try {
+      parsed = JSON.parse(cached.analysis_json);
+    } catch (e) {}
+
+    const isUpdating = activeAiAnalyses.has(id) || cached.status === 'updating' || cached.needs_update === 1;
 
     res.json({
-      hasAnalysis: Boolean(!isStale && parsed && (parsed.totalComments > 0 || parsed.topTraits?.length > 0)),
+      hasAnalysis: Boolean(parsed && (parsed.totalComments > 0 || parsed.topTraits?.length > 0)),
       status: isUpdating ? 'updating' : 'ready',
-      is_stale: isStale,
       needs_update: Boolean(cached.needs_update || isStale),
-      analysis: isStale ? null : parsed, // NEVER display stale old analysis if comments changed!
-      cached_analysis: isStale ? parsed : undefined,
+      analysis: parsed,
       analyzed_at: cached.analyzed_at,
       comments_analyzed_count: cached.comments_analyzed_count,
       total_current_comments: comments.length,
-      new_comments_count: newCommentsCount,
     });
   } catch (err: any) {
-    console.error('Error in AI analysis route:', err);
+    console.error('Error in /api/pages/:id/analysis:', err);
     res.status(500).json({ error: 'فشل جلب التحليل.' });
   }
-};
-
-app.get('/api/pages/:id/ai-analysis', requireAuth, handleGetAiAnalysis);
-app.get('/api/pages/:id/analysis', requireAuth, handleGetAiAnalysis);
+});
 
 // Protected: Only authenticated page owner can trigger a manual re-analysis
-const handlePostAiAnalysis = async (req: AuthenticatedRequest, res: Response) => {
+app.post('/api/pages/:id/analyze', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
     const page = getPageById(id);
@@ -932,36 +705,28 @@ const handlePostAiAnalysis = async (req: AuthenticatedRequest, res: Response) =>
       return;
     }
 
-    const comments = getPageComments(id, undefined, 'newest', false);
+    const comments = getPageComments(id, undefined, 'votes', false);
     if (comments.length === 0) {
-      res.status(400).json({ error: 'لا توجد تعليقات كافية لإجراء تحليل موثوق.' });
+      res.status(400).json({ error: 'لا توجد تعليقات بعد لإجراء التحليل.' });
       return;
     }
 
     const commentTexts = comments.map(c => c.content.trim()).filter(Boolean);
-    const analysis = await analyzeCommentsWithAI(page.question, commentTexts, id);
+    const analysis = await analyzeCommentsWithAI(page.question, commentTexts);
 
-    lastAiExecutionTimes.set(id, Date.now());
     saveAiAnalysis(id, JSON.stringify(analysis), comments.length, 'ready');
-    console.log('Analysis saved: YES');
 
     res.json({
       success: true,
       analysis,
       analyzed_at: new Date().toISOString(),
       comments_analyzed_count: comments.length,
-      total_current_comments: comments.length,
-      new_comments_count: 0,
     });
   } catch (err: any) {
-    console.error('AI Analysis Trigger error:', err);
-    res.status(500).json({ error: err?.message || 'تعذر إجراء تحليل AI حقيقي حاليًا.' });
+    console.error('AI Manual Trigger error:', err);
+    res.status(500).json({ error: 'فشل إجراء تحليل الذكاء الاصطناعي.' });
   }
-};
-
-app.post('/api/pages/:id/ai-analysis', requireAuth, handlePostAiAnalysis);
-app.post('/api/pages/:id/ai-analyze', requireAuth, handlePostAiAnalysis);
-app.post('/api/pages/:id/analyze', requireAuth, handlePostAiAnalysis);
+});
 
 // --- Backup Routes ---
 app.post('/api/backup', requireAuth, (req: AuthenticatedRequest, res: Response) => {
@@ -1052,164 +817,35 @@ app.post('/api/paypal/capture-order', requireAuth, async (req: AuthenticatedRequ
   }
 });
 
-// Explicit 404 for any unhandled /api/* endpoint - strictly JSON, never HTML
-app.all('/api/*', (req: Request, res: Response) => {
-  res.status(404).json({ error: 'نقطة نهاية غير موجودة.' });
-});
-
 // Vite middleware in dev or static files in production
-let viteServer: any = null;
 if (!isProduction) {
   const { createServer: createViteServer } = await import('vite');
-  viteServer = await createViteServer({
+  const vite = await createViteServer({
     server: { middlewareMode: true },
     appType: 'spa',
   });
-  // Route Vite middlewares only for frontend assets, bypassing API and /q /u routes
-  app.use((req, res, next) => {
-    if (
-      req.originalUrl.startsWith('/api') ||
-      req.originalUrl.startsWith('/q') ||
-      req.originalUrl.startsWith('/u')
-    ) {
+  app.use(vite.middlewares);
+  app.use('*', async (req, res, next) => {
+    if (req.originalUrl.startsWith('/api')) {
       return next();
     }
-    return viteServer.middlewares(req, res, next);
+    try {
+      const templatePath = path.resolve(process.cwd(), 'index.html');
+      let template = fs.readFileSync(templatePath, 'utf-8');
+      template = await vite.transformIndexHtml(req.originalUrl, template);
+      res.status(200).set({ 'Content-Type': 'text/html' }).end(template);
+    } catch (e) {
+      vite.ssrFixStacktrace(e as Error);
+      next(e);
+    }
   });
 } else {
   const distDir = path.resolve(process.cwd(), 'dist');
   app.use(express.static(distDir));
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(distDir, 'index.html'));
+  });
 }
-
-// Explicit Public Routes for Question Pages: /q/:slug and /u/:slug
-// Accessible from any device (Android, iPhone Safari, Chrome Mobile, Desktop) with ZERO auth required
-const handlePublicQuestionRoute = async (req: Request, res: Response, next: any) => {
-  try {
-    const rawSlug = req.params.slug;
-    let decodedSlug = rawSlug;
-    try {
-      decodedSlug = decodeURIComponent(rawSlug);
-    } catch (e) {}
-
-    const page =
-      getPageBySlug(decodedSlug) ||
-      getPageBySlug(rawSlug) ||
-      getPageById(decodedSlug) ||
-      getPageById(rawSlug);
-
-    // If client asks for JSON (e.g. programmatic fetch, curl, or mobile app API call)
-    if (req.headers.accept?.includes('application/json') || req.query.format === 'json') {
-      if (!page) {
-        return res.status(404).json({ error: 'الصفحة غير موجودة أو تم حذفها.' });
-      }
-      return res.status(200).json({
-        page: {
-          id: page.id,
-          user_id: page.user_id,
-          question: page.question,
-          slug: page.slug,
-          max_comments: page.max_comments || 50,
-          comments_count: page.comments_count,
-          remaining_comments: Math.max(0, (page.max_comments || 50) - page.comments_count),
-          is_active: page.is_active === 1,
-          created_at: page.created_at,
-          owner_name: page.owner_name,
-          owner_image: page.owner_image,
-        },
-      });
-    }
-
-    // Direct Browser Navigation: ALWAYS serve index.html with HTTP 200 OK!
-    // This allows React Router to load seamlessly on mobile and desktop without Cloud Run / GFE
-    // intercepting the response with a generic "The requested URL was not found on this server" page.
-    const distHtml = path.resolve(process.cwd(), 'dist/index.html');
-    const rootHtml = path.resolve(process.cwd(), 'index.html');
-    let template = '';
-
-    if (isProduction && fs.existsSync(distHtml)) {
-      template = fs.readFileSync(distHtml, 'utf-8');
-    } else if (fs.existsSync(rootHtml)) {
-      template = fs.readFileSync(rootHtml, 'utf-8');
-    } else if (fs.existsSync(distHtml)) {
-      template = fs.readFileSync(distHtml, 'utf-8');
-    }
-
-    if (page) {
-      const sanitizedQuestion = page.question
-        .replace(/&/g, '&amp;')
-        .replace(/"/g, '&quot;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-
-      template = template
-        .replace(/<title>.*?<\/title>/, `<title>${sanitizedQuestion} | بصيرة AI</title>`)
-        .replace(
-          /<meta property="og:title" content=".*?" \/>/,
-          `<meta property="og:title" content="${sanitizedQuestion} | بصيرة AI" />`
-        );
-
-      const preloadedData = JSON.stringify({
-        id: page.id,
-        user_id: page.user_id,
-        question: page.question,
-        slug: page.slug,
-        max_comments: page.max_comments || 50,
-        comments_count: page.comments_count,
-        remaining_comments: Math.max(0, (page.max_comments || 50) - page.comments_count),
-        is_active: page.is_active === 1,
-        created_at: page.created_at,
-        owner_name: page.owner_name,
-        owner_image: page.owner_image,
-      });
-
-      template = template.replace('</head>', `<script>window.__INITIAL_PAGE__ = ${preloadedData};</script></head>`);
-    }
-
-    if (!isProduction && viteServer) {
-      template = await viteServer.transformIndexHtml(req.originalUrl, template);
-    }
-
-    res.status(200).set({ 'Content-Type': 'text/html; charset=utf-8' }).end(template);
-  } catch (err) {
-    next(err);
-  }
-};
-
-app.get('/q/:slug', handlePublicQuestionRoute);
-app.get('/u/:slug', handlePublicQuestionRoute);
-app.get('/q', (req, res) => res.redirect('/'));
-
-// Fallback SPA route for all client routes (e.g. /, /dashboard, /payment/success, etc.)
-app.get('*', async (req, res, next) => {
-  if (req.originalUrl.startsWith('/api')) {
-    return res.status(404).json({ error: 'نقطة نهاية غير موجودة.' });
-  }
-
-  try {
-    const distHtml = path.resolve(process.cwd(), 'dist/index.html');
-    const rootHtml = path.resolve(process.cwd(), 'index.html');
-    let template = '';
-
-    if (isProduction && fs.existsSync(distHtml)) {
-      template = fs.readFileSync(distHtml, 'utf-8');
-    } else if (fs.existsSync(rootHtml)) {
-      template = fs.readFileSync(rootHtml, 'utf-8');
-    } else if (fs.existsSync(distHtml)) {
-      template = fs.readFileSync(distHtml, 'utf-8');
-    }
-
-    if (!isProduction && viteServer) {
-      template = await viteServer.transformIndexHtml(req.originalUrl, template);
-    }
-
-    res.status(200).set({ 'Content-Type': 'text/html; charset=utf-8' }).end(template);
-  } catch (e) {
-    if (!isProduction && viteServer) {
-      viteServer.ssrFixStacktrace(e as Error);
-    }
-    next(e);
-  }
-});
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Baseera AI Server running on port ${PORT}`);

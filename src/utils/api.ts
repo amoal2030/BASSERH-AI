@@ -78,18 +78,17 @@ export function setAppBaseUrl(url: string): void {
  */
 export function getPublicShareUrl(slug: string): string {
   const cleanSlug = slug.replace(/^\/+/, '').replace(/^(q|u)\//, '');
-  let base = '';
-
   const envBase = (import.meta as any).env?.VITE_APP_BASE_URL;
   if (envBase && typeof envBase === 'string' && envBase.trim()) {
-    base = envBase.trim().replace(/\/+$/, '');
-  } else if (cachedAppBaseUrl) {
-    base = cachedAppBaseUrl.replace(/\/+$/, '');
-  } else if (typeof window !== 'undefined' && window.location?.origin) {
-    base = window.location.origin.replace(/\/+$/, '');
+    return `${envBase.trim().replace(/\/+$/, '')}/q/${cleanSlug}`;
   }
-
-  return base ? `${base}/q/${cleanSlug}` : `/q/${cleanSlug}`;
+  if (cachedAppBaseUrl) {
+    return `${cachedAppBaseUrl}/q/${cleanSlug}`;
+  }
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return `${window.location.origin}/q/${cleanSlug}`;
+  }
+  return `/q/${cleanSlug}`;
 }
 
 /**

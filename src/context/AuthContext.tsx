@@ -33,20 +33,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(() => getStoredUser());
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [lang, setLangState] = useState<Language>(() => {
-    try {
-      return (localStorage.getItem('baseera_lang') as Language) || 'ar';
-    } catch (e) {
-      return 'ar';
-    }
+    return (localStorage.getItem('baseera_lang') as Language) || 'ar';
   });
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
 
   // Sync HTML dir and lang attributes
   const setLang = (newLang: Language) => {
     setLangState(newLang);
-    try {
-      localStorage.setItem('baseera_lang', newLang);
-    } catch (e) {}
+    localStorage.setItem('baseera_lang', newLang);
     document.documentElement.lang = newLang;
     document.documentElement.dir = newLang === 'ar' ? 'rtl' : 'ltr';
   };
@@ -190,16 +184,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = async () => {
     try {
       await authFetch('/api/auth/logout', { method: 'POST' });
-    } catch (e) {
-      console.error(e);
-    }
-    try {
       await signOutFirebase();
     } catch (e) {
       console.error(e);
     } finally {
       removeStoredToken();
-      setStoredUser(null);
       setUser(null);
     }
   };

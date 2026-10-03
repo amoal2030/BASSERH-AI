@@ -2,7 +2,6 @@ import initSqlJs from 'sql.js';
 import type { Database } from 'sql.js';
 import fs from 'fs';
 import path from 'path';
-import crypto from 'crypto';
 
 let db: Database;
 const DB_DIR = path.resolve(process.cwd(), 'data');
@@ -362,19 +361,6 @@ export function getUserByGoogleId(googleId: string): User | null {
   return null;
 }
 
-export function getUserByEmail(email: string): User | null {
-  if (!email) return null;
-  const stmt = db.prepare('SELECT * FROM users WHERE email = :email');
-  stmt.bind({ ':email': email.trim().toLowerCase() });
-  if (stmt.step()) {
-    const row = stmt.getAsObject() as unknown as User;
-    stmt.free();
-    return row;
-  }
-  stmt.free();
-  return null;
-}
-
 export function createOrUpdateUser(user: {
   id: string;
   google_id: string;
@@ -384,7 +370,6 @@ export function createOrUpdateUser(user: {
 }): User {
   const existing = getUserByGoogleId(user.google_id);
   const now = new Date().toISOString();
-  const normalizedEmail = user.email.trim().toLowerCase();
 
   if (existing) {
     db.run(
@@ -392,41 +377,20 @@ export function createOrUpdateUser(user: {
       {
         ':id': existing.id,
         ':name': user.name,
-        ':email': normalizedEmail,
+        ':email': user.email,
         ':image': user.profile_image,
       }
     );
     persistDatabase();
-    return { ...existing, name: user.name, email: normalizedEmail, profile_image: user.profile_image };
+    return { ...existing, name: user.name, email: user.email, profile_image: user.profile_image };
   } else {
-    // If user previously registered with same email, link their google_id
-    const existingByEmail = getUserByEmail(normalizedEmail);
-    if (existingByEmail) {
-      db.run(
-        'UPDATE users SET google_id = :google_id, name = :name, profile_image = :image WHERE id = :id',
-        {
-          ':id': existingByEmail.id,
-          ':google_id': user.google_id,
-          ':name': user.name,
-          ':image': user.profile_image,
-        }
-      );
-      persistDatabase();
-      return {
-        ...existingByEmail,
-        google_id: user.google_id,
-        name: user.name,
-        profile_image: user.profile_image,
-      };
-    }
-
     db.run(
       'INSERT INTO users (id, google_id, name, email, profile_image, created_at) VALUES (:id, :google_id, :name, :email, :image, :created_at)',
       {
         ':id': user.id,
         ':google_id': user.google_id,
         ':name': user.name,
-        ':email': normalizedEmail,
+        ':email': user.email,
         ':image': user.profile_image,
         ':created_at': now,
       }
@@ -436,7 +400,7 @@ export function createOrUpdateUser(user: {
       id: user.id,
       google_id: user.google_id,
       name: user.name,
-      email: normalizedEmail,
+      email: user.email,
       profile_image: user.profile_image,
       created_at: now,
     };
@@ -763,7 +727,6 @@ export function deleteComment(commentId: string, userId: string): boolean {
     ':now': now,
   });
 
-  markAiAnalysisNeedsUpdate(comment.page_id);
   persistDatabase();
   return true;
 }
@@ -781,7 +744,6 @@ export function toggleHideComment(commentId: string, userId: string): boolean {
     ':id': commentId,
   });
 
-  markAiAnalysisNeedsUpdate(comment.page_id);
   persistDatabase();
   return true;
 }
@@ -870,11 +832,6 @@ export function addReport(params: {
 }
 
 // AI Analysis functions
-export function deleteAiAnalysis(pageId: string): void {
-  db.run('DELETE FROM ai_analyses WHERE page_id = :id', { ':id': pageId });
-  persistDatabase();
-}
-
 export function saveAiAnalysis(
   pageId: string,
   analysisJson: string,
@@ -882,7 +839,7 @@ export function saveAiAnalysis(
   status: string = 'ready'
 ): void {
   const now = new Date().toISOString();
-  const id = 'ai_' + crypto.randomBytes(6).toString('hex');
+  const id = 'ai_' + Math.random().toString(36).substring(2, 10);
 
   let summary = '';
   let traits = '';
@@ -942,7 +899,7 @@ export function markAiAnalysisNeedsUpdate(pageId: string): void {
       { ':page_id': pageId, ':now': now }
     );
   } else {
-    const id = 'ai_' + crypto.randomBytes(6).toString('hex');
+    const id = 'ai_' + Math.random().toString(36).substring(2, 10);
     db.run(
       `INSERT INTO ai_analyses (id, page_id, summary, traits, percentages, analysis_json, analyzed_at, comments_analyzed_count, status, needs_update, created_at, updated_at)
        VALUES (:id, :page_id, '', '[]', '[]', '{}', :now, 0, 'updating', 1, :now, :now)`,
@@ -1028,6 +985,76 @@ function seedInitialDataIfEmpty() {
         VALUES ('${cId}', '${demoPageId}', 'anon_hash_${idx}', :content, ${c.votes}, 0, '${now}')
       `, { ':content': c.text });
     });
+
+    // Seed analysis for demo page
+    const sampleAnalysis = {
+      totalComments: 14,
+      summary: "استناداً إلى 14 تعليقاً مجهولاً، أجمع أغلب المشاركين على أنك تتمتع بشخصية قوية ومبادرة، مع حضور اجتماعي لافت وروح تعاونية ملحوظة، مع نصيحة رقيقة بضرورة أخذ قسط من الراحة والهدوء عند ضغوطات العمل.",
+      summaryEn: "Based on 14 anonymous comments, participants highlighted your strong leadership, sociable presence, and willingness to help others, along with friendly advice to pace yourself and manage stress calmly.",
+      dominantTrait: {
+        trait: "قوة الشخصية والقيادة",
+        traitEn: "Strong Personality & Leadership",
+        count: 8,
+        percentage: 57
+      },
+      topTraits: [
+        {
+          trait: "قوة الشخصية والقيادة",
+          traitEn: "Strong Personality & Leadership",
+          count: 8,
+          percentage: 57,
+          category: "strength",
+          explanation: "ذكر 8 من أصل 14 تعليقاً كلمات صريحة حول قوة الشخصية، القيادة بالفطرة، والجسارة في اتخاذ القرارات."
+        },
+        {
+          trait: "الاجتماعية والمحبة",
+          traitEn: "Sociable & Likable",
+          count: 6,
+          percentage: 43,
+          category: "strength",
+          explanation: "تكرر وصفك بالشخص الاجتماعي والمحبوب ذو الحضور البارز في التجمعات في 6 تعليقات."
+        },
+        {
+          trait: "التعاون وخدمة الآخرين",
+          traitEn: "Cooperative & Helpful",
+          count: 5,
+          percentage: 36,
+          category: "strength",
+          explanation: "أشاد 5 معلقين بروح المبادرة ومساعدتك للآخرين وطيبة القلب."
+        },
+        {
+          trait: "الطموح والمثابرة",
+          traitEn: "Ambition & Drive",
+          count: 4,
+          percentage: 29,
+          category: "strength",
+          explanation: "أشار 4 معلقين إلى إصرارك على أهدافك والذكاء السريع."
+        },
+        {
+          trait: "الحاجة للهدوء وتخفيف الضغط",
+          traitEn: "Need for Calm & Rest",
+          count: 3,
+          percentage: 21,
+          category: "growth",
+          explanation: "اقترح 3 معلقين نصائح بناءة بخصوص تجنب الغضب وأخذ وقت كافٍ للراحة وعدم إرهاق النفس."
+        }
+      ],
+      positiveThemes: [
+        "القدرة العالية على توجيه الأمور وحسم المواقف",
+        "روح إيجابية تجعل الجلسات ممتعة",
+        "الأمانة وحب الخير للناس"
+      ],
+      constructiveCritiques: [
+        "التأني والهدوء عند مواجهة لحظات الغضب أو التوتر",
+        "الموازنة بين خدمة الآخرين والاهتمام براحتك الشخصية"
+      ],
+      disclaimer: "هذه النتائج والنسب مبنية حصرياً على تكرار آراء الأشخاص الذين شاركوا في التعليق، وليست تقييماً نفسياً أو حكماً علمياً مطلقاً."
+    };
+
+    db.run(`
+      INSERT INTO ai_analyses (id, page_id, analysis_json, analyzed_at, comments_analyzed_count)
+      VALUES ('ai_seed_1', '${demoPageId}', :json, '${now}', 14)
+    `, { ':json': JSON.stringify(sampleAnalysis) });
 
     persistDatabase();
   }

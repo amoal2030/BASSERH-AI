@@ -30,7 +30,6 @@ export const AiAnalysisModal: React.FC<AiAnalysisModalProps> = ({ page, isOpen, 
   const [status, setStatus] = useState<string>('ready');
   const [isUpdating, setIsUpdating] = useState(false);
   const [commentsAnalyzedCount, setCommentsAnalyzedCount] = useState<number>(0);
-  const [newCommentsCount, setNewCommentsCount] = useState<number>(0);
   const [analyzedAt, setAnalyzedAt] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState('');
   const [manualRefreshing, setManualRefreshing] = useState(false);
@@ -41,7 +40,7 @@ export const AiAnalysisModal: React.FC<AiAnalysisModalProps> = ({ page, isOpen, 
     setErrorMsg('');
 
     try {
-      const res = await authFetch(`/api/pages/${page.id}/ai-analysis`);
+      const res = await authFetch(`/api/pages/${page.id}/analysis`);
       if (res.status === 403) {
         setErrorMsg(
           lang === 'ar'
@@ -60,7 +59,6 @@ export const AiAnalysisModal: React.FC<AiAnalysisModalProps> = ({ page, isOpen, 
       setStatus(data.status || 'ready');
       setIsUpdating(data.status === 'updating' || data.needs_update === true);
       setCommentsAnalyzedCount(data.comments_analyzed_count || 0);
-      setNewCommentsCount(data.new_comments_count || 0);
       setAnalyzedAt(data.analyzed_at || '');
 
       if (data.analysis) {
@@ -97,14 +95,13 @@ export const AiAnalysisModal: React.FC<AiAnalysisModalProps> = ({ page, isOpen, 
     setManualRefreshing(true);
     setErrorMsg('');
     try {
-      const res = await authFetch(`/api/pages/${page.id}/ai-analysis`, { method: 'POST' });
+      const res = await authFetch(`/api/pages/${page.id}/analyze`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.error || 'فشل التحديث');
       }
       setAnalysis(data.analysis);
       setCommentsAnalyzedCount(data.comments_analyzed_count || 0);
-      setNewCommentsCount(0);
       setAnalyzedAt(data.analyzed_at || new Date().toISOString());
       setStatus('ready');
       setIsUpdating(false);
@@ -164,19 +161,13 @@ export const AiAnalysisModal: React.FC<AiAnalysisModalProps> = ({ page, isOpen, 
             <div className="flex items-center gap-2.5 flex-wrap">
               <div className="flex items-center gap-1.5 text-slate-300">
                 <MessageSquare className="w-4 h-4 text-indigo-400 shrink-0" />
-                <span>{lang === 'ar' ? 'إجمالي التعليقات الحالية:' : 'Current comments:'}</span>
+                <span>{lang === 'ar' ? 'إجمالي التعليقات:' : 'Total comments:'}</span>
                 <strong className="text-white font-mono">{currentCount} / {maxLimit.toLocaleString()}</strong>
               </div>
 
               {commentsAnalyzedCount > 0 && (
-                <span className="px-2.5 py-0.5 rounded-full bg-slate-800 text-indigo-300 font-medium">
-                  {lang === 'ar' ? `تم تحليل ${commentsAnalyzedCount} تعليقًا` : `Analyzed ${commentsAnalyzedCount} comments`}
-                </span>
-              )}
-
-              {newCommentsCount > 0 && (
-                <span className="px-2.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 font-semibold animate-pulse">
-                  {lang === 'ar' ? `يوجد ${newCommentsCount} تعليق جديد منذ آخر تحليل` : `${newCommentsCount} new comments since last analysis`}
+                <span className="text-slate-400">
+                  ({lang === 'ar' ? `التحليل بُني على ${commentsAnalyzedCount} تعليقاً` : `Based on ${commentsAnalyzedCount} comments`})
                 </span>
               )}
             </div>
@@ -185,12 +176,7 @@ export const AiAnalysisModal: React.FC<AiAnalysisModalProps> = ({ page, isOpen, 
               {isUpdating ? (
                 <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 font-medium">
                   <RefreshCw className="w-3 h-3 animate-spin" />
-                  <span>{lang === 'ar' ? 'جارِ التحليل الحقيقي...' : 'Analyzing real comments...'}</span>
-                </div>
-              ) : newCommentsCount > 0 ? (
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 font-medium">
-                  <RefreshCw className="w-3 h-3" />
-                  <span>{lang === 'ar' ? 'يتوفر تحديث' : 'Update available'}</span>
+                  <span>{lang === 'ar' ? 'جارِ تحديث التحليل تلقائيًا...' : 'Auto-updating analysis...'}</span>
                 </div>
               ) : (
                 <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-medium">
@@ -281,17 +267,10 @@ export const AiAnalysisModal: React.FC<AiAnalysisModalProps> = ({ page, isOpen, 
 
               {/* Top Repeated Traits & Percentages */}
               <div>
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 mb-3">
-                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4 text-indigo-400" />
-                    <span>{lang === 'ar' ? 'أكثر الصفات والأفكار تكرارًا والنسب المئوية' : 'Most Frequent Traits & Percentages'}</span>
-                  </h4>
-                  <span className="text-[11px] text-slate-400">
-                    {lang === 'ar'
-                      ? 'قد يذكر التعليق الواحد أكثر من صفة، لذلك قد يتجاوز مجموع النسب 100%.'
-                      : 'One comment may mention multiple traits, total may exceed 100%.'}
-                  </span>
-                </div>
+                <h4 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
+                  <TrendingUp className="w-4 h-4 text-indigo-400" />
+                  <span>{lang === 'ar' ? 'أكثر الصفات والأفكار تكرارًا والنسب المئوية' : 'Most Frequent Traits & Percentages'}</span>
+                </h4>
 
                 <div className="space-y-3">
                   {(analysis.topTraits || []).map((t, idx) => (
@@ -395,8 +374,8 @@ export const AiAnalysisModal: React.FC<AiAnalysisModalProps> = ({ page, isOpen, 
                 <p className="leading-relaxed">
                   {analysis.disclaimer ||
                     (lang === 'ar'
-                      ? 'هذه النتائج تمثل تحليلاً آلياً لآراء المشاركين وليست تقييماً علمياً أو تشخيصاً موضوعياً للشخص.'
-                      : 'These results represent automated analysis of participants opinions and are not a scientific evaluation or objective diagnosis.')}
+                      ? 'التحليل مبني على محتوى التعليقات الفعلية فقط مع حجب كامل ومحكم لهوية وكاتبي التعليقات للحفاظ على سرية المشاركين.'
+                      : 'Analysis is based strictly on anonymous comment text content; author identities are never disclosed.')}
                 </p>
               </div>
             </div>
@@ -423,11 +402,11 @@ export const AiAnalysisModal: React.FC<AiAnalysisModalProps> = ({ page, isOpen, 
               <button
                 type="button"
                 onClick={handleManualTrigger}
-                disabled={manualRefreshing}
+                disabled={manualRefreshing || isUpdating}
                 className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-50 cursor-pointer"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${manualRefreshing ? 'animate-spin' : ''}`} />
-                <span>{manualRefreshing ? (lang === 'ar' ? 'جاري التحليل من Gemini...' : 'Analyzing with Gemini...') : (lang === 'ar' ? 'إعادة التحليل الفوري' : 'Re-analyze Now')}</span>
+                <span>{manualRefreshing ? (lang === 'ar' ? 'جاري التحليل...' : 'Analyzing...') : (lang === 'ar' ? 'تحديث فوري' : 'Refresh Now')}</span>
               </button>
             )}
 

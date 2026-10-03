@@ -28,12 +28,14 @@ interface PublicQuestionPageProps {
   slug: string;
   onOpenShare: (slug: string, question: string) => void;
   onOpenReport: (commentId: string) => void;
+  onOpenResults: (slug: string) => void;
 }
 
 export const PublicQuestionPage: React.FC<PublicQuestionPageProps> = ({
   slug,
   onOpenShare,
   onOpenReport,
+  onOpenResults,
 }) => {
   const { user, t, lang, openLoginModal } = useAuth();
   
@@ -450,28 +452,28 @@ export const PublicQuestionPage: React.FC<PublicQuestionPageProps> = ({
           )}
 
           {successNotice && (
-            <div className="mb-4 p-4 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-sm font-semibold flex items-center gap-2.5 animate-in fade-in duration-200 shadow-sm">
-              <CheckCircle className="w-5 h-5 shrink-0 text-emerald-400" />
+            <div className="mb-4 p-3.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs sm:text-sm font-semibold flex items-center gap-2 animate-in fade-in duration-200">
+              <CheckCircle className="w-4 h-4 shrink-0 text-emerald-400" />
               <span>
                 {lang === 'ar'
-                  ? 'تم إرسال تعليقك بنجاح.'
-                  : 'Your comment has been submitted successfully.'}
+                  ? 'تم إرسال تعليقك.'
+                  : 'Your comment has been submitted.'}
               </span>
             </div>
           )}
 
           {hasAlreadyCommented ? (
-            <div className="p-5 sm:p-6 rounded-2xl bg-slate-950/60 border border-slate-800 text-center animate-in fade-in duration-300">
-              <div className="w-10 h-10 rounded-xl bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 flex items-center justify-center mx-auto mb-2.5">
-                <CheckCircle className="w-5 h-5" />
+            <div className="p-5 sm:p-6 rounded-2xl bg-indigo-950/40 border border-indigo-500/30 text-center animate-in fade-in duration-300">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center mx-auto mb-3">
+                <CheckCircle className="w-6 h-6" />
               </div>
-              <h4 className="text-sm sm:text-base font-bold text-white mb-1">
-                {lang === 'ar' ? 'تم إرسال تعليقك بنجاح.' : 'Your comment has been submitted successfully.'}
+              <h4 className="text-sm sm:text-base font-bold text-white mb-1.5">
+                {lang === 'ar' ? 'لقد أرسلت تعليقًا بالفعل على هذه الصفحة.' : 'You have already commented on this page.'}
               </h4>
-              <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
+              <p className="text-xs text-slate-300 max-w-md mx-auto leading-relaxed">
                 {lang === 'ar'
-                  ? 'يُسمح بتعليق واحد فقط لكل مستخدم على هذه الصفحة.'
-                  : 'Only one comment is allowed per user on this page.'}
+                  ? 'يُسمح بتعليق واحد فقط لكل مستخدم على كل صفحة سؤال لضمان مصداقية النتائج وعدالة تقرير الذكاء الاصطناعي.'
+                  : 'Only one comment is allowed per user on each question page to ensure genuine results.'}
               </p>
             </div>
           ) : (
@@ -528,6 +530,29 @@ export const PublicQuestionPage: React.FC<PublicQuestionPageProps> = ({
           )}
         </div>
       )}
+
+      {/* AI Results Promotion Banner */}
+      <div className="mb-8 p-5 rounded-3xl bg-gradient-to-r from-indigo-950/70 via-slate-900 to-violet-950/70 border border-indigo-500/30 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-2xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0">
+            <Sparkles className="w-5 h-5" />
+          </div>
+          <div>
+            <h4 className="text-sm font-bold text-white">
+              {t('public_view_results_banner')}
+            </h4>
+            <p className="text-xs text-slate-400">
+              {lang === 'ar' ? 'استخراج أبرز الصفات، النسب، وتصنيفات الآراء' : 'Trait clustering and percentage insights'}
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={() => onOpenResults(page.slug)}
+          className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow-md transition-all shrink-0"
+        >
+          {t('public_view_results_btn')}
+        </button>
+      </div>
 
       {/* Comments List Section */}
       <div className="space-y-4">

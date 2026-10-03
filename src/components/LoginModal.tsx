@@ -22,16 +22,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
       if (res.success) {
         onClose();
       } else {
-        if (res.error?.includes('popup') || res.error?.includes('blocked') || res.error?.includes('closed')) {
-          try {
-            const urlRes = await fetch('/api/auth/google/url');
-            const urlData = await urlRes.json();
-            if (urlData.url) {
-              window.location.href = urlData.url;
-              return;
-            }
-          } catch (e) {}
-        }
         setErrorMsg(res.error || (lang === 'ar' ? 'فشل تسجيل الدخول بحساب Google.' : 'Google sign-in failed.'));
       }
     } catch (err: any) {

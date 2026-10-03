@@ -26,6 +26,7 @@ import {
 interface DashboardPageProps {
   onOpenCreate: () => void;
   onOpenShare: (slug: string, question: string) => void;
+  onOpenResults: (slug: string) => void;
   onOpenPublic: (slug: string) => void;
   onOpenUpgrade?: (page: Page) => void;
 }
@@ -33,6 +34,7 @@ interface DashboardPageProps {
 export const DashboardPage: React.FC<DashboardPageProps> = ({
   onOpenCreate,
   onOpenShare,
+  onOpenResults,
   onOpenPublic,
   onOpenUpgrade,
 }) => {
