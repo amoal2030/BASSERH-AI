@@ -1,0 +1,6 @@
+{
+  "name": "Baseera AI - Anonymous Feedback & AI Traits Analysis",
+  "description": "منصة استطلاع الآراء والتعليقات المجهولة مع تصويت مجتمعي وتحليل الذكاء الاصطناعي لاستخراج أبرز السمات والنسب الحقيقية. Anonymous feedback & AI trait analysis platform.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
